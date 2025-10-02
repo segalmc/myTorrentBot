@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram → qBittorrent bot (auto-ID, save to USB)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=michael
+Group=michael
+WorkingDirectory=/opt/tg-torrent-bot
+EnvironmentFile=/opt/tg-torrent-bot/.env
+ExecStart=/opt/tg-torrent-bot/.venv/bin/python /opt/tg-torrent-bot/bot.py
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
+
