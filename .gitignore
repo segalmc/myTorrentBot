@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# venv
+.venv/
+venv/
+env/
+*.egg-info/
+
+# local files / secrets
+.env
+state.db
+bot.log
+
+# OS
+.DS_Store
