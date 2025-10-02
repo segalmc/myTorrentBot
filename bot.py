@@ -1,4 +1,4 @@
-import asyncio, os, random, re, json, time, logging
+import asyncio, os, random, re, json, time, logging, sys
 import aiohttp, aiosqlite
 from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher, F, types
@@ -7,10 +7,30 @@ from aiogram.enums import ParseMode
 from dotenv import load_dotenv
 
 # Enable logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 # Load .env explicitly
 load_dotenv(dotenv_path="/opt/tg-torrent-bot/.env")
+
+# Log uncaught exceptions to the journal so systemd shows full traces
+def _log_uncaught(exc_type, exc_value, exc_tb):
+    logging.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
+
+sys.excepthook = _log_uncaught
+
+def _asyncio_exception_handler(loop, context):
+    try:
+        logging.critical("Uncaught async exception: %s", context)
+        if "exception" in context and context["exception"] is not None:
+            logging.critical("Async exception info:", exc_info=context["exception"])
+    except Exception:
+        logging.exception("Failed in asyncio exception handler")
+
+try:
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(_asyncio_exception_handler)
+except Exception:
+    logging.exception("Failed to set asyncio exception handler")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 QB_URL = os.getenv("QB_URL", "http://127.0.0.1:8080").rstrip("/")
@@ -110,7 +130,9 @@ class QBClient:
         async with self.s.get(f"{QB_URL}/api/v2/torrents/info",
                               params={"tag": tag}) as r:
             text = await r.text()
+            logging.debug("qBittorrent /torrents/info status=%s len=%d body=%s", r.status, len(text or ""), (text or "")[:1000])
             if r.status != 200:
+                logging.error("qBittorrent /torrents/info returned %s: %s", r.status, (text or "")[:500])
                 return []
             try:
                 return json.loads(text or "[]")
@@ -150,6 +172,23 @@ async def job_del(tag):
 # -------------------
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+# Helper to reliably reply to a message. If reply fails, fall back to bot.send_message
+async def safe_reply(message, text):
+    """Try message.reply(), fall back to bot.send_message(chat_id, text).
+
+    Keeps failures logged so systemd/journal shows send errors.
+    """
+    try:
+        await message.reply(text)
+        return
+    except Exception:
+        logging.exception("Primary reply() failed, attempting fallback send_message for chat %s", getattr(message, 'chat', None))
+    try:
+        chat_id = message.chat.id if hasattr(message, 'chat') else message
+        await bot.send_message(chat_id, text)
+    except Exception:
+        logging.exception("Fallback bot.send_message also failed for chat %s", chat_id)
 
 async def gen_id4():
     async with aiosqlite.connect(DB_PATH) as db:
